@@ -8,6 +8,7 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     
+    <!-- Google Identity Services & Drive API Client -->
     <script src="https://accounts.google.com/gsi/client" async defer></script>
     <script src="https://apis.google.com/js/api.js" async defer></script>
 
@@ -28,18 +29,16 @@
 
         * { box-sizing: border-box; margin: 0; padding: 0; }
         body { font-family: 'Inter', sans-serif; background-color: var(--background); color: var(--text); line-height: 1.5; padding: 2rem 1rem; }
-        
-        /* Layout Containers */
         .container { max-width: 800px; margin: 0 auto; background: var(--surface); padding: 2rem; border-radius: var(--radius); box-shadow: var(--shadow); }
         
-        /* Welcome / Onboarding Screen Styling */
-        #welcomeScreen { text-align: center; padding: 3rem 1rem; }
-        #welcomeScreen h1 { font-size: 2.25rem; font-weight: 800; margin-bottom: 1rem; color: var(--text); }
+        /* Onboarding Screen Layout */
+        #welcomeScreen { text-align: center; padding: 3rem 1rem; display: none; }
+        #welcomeScreen h1 { font-size: 2.25rem; font-weight: 800; margin-bottom: 1rem; }
         #welcomeScreen p { color: var(--text-muted); font-size: 1.1rem; max-width: 500px; margin: 0 auto 2.5rem auto; }
-        .btn-large { padding: 0.85rem 2rem; font-size: 1.1rem; font-weight: 600; border-radius: 8px; box-shadow: 0 4px 6px -1px rgba(79, 70, 229, 0.4); }
+        .google-btn-wrapper { display: inline-flex; justify-content: center; width: 100%; }
 
-        /* App Main Area Styling */
-        #appScreen { display: none; } /* Hidden until authenticated */
+        /* Main App Area Layout */
+        #appScreen { display: none; }
         
         header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem; flex-wrap: wrap; gap: 1rem; }
         h1 { font-size: 1.75rem; font-weight: 700; }
@@ -104,12 +103,16 @@
 
 <div class="container">
     
+    <!-- SCREEN 1: ONBOARDING WELCOME GATE -->
     <div id="welcomeScreen">
         <h1>To-Do Checklist</h1>
-        <p>Keep your assignments and tasks completely synchronized between your desktop and mobile devices effortlessly using your Google Account storage.</p>
-        <button class="btn-primary btn-large" id="loginBtn" onclick="handleInitialLoginClick()">Continue with Google</button>
+        <p>Keep your tasks completely synchronized between your desktop and mobile devices effortlessly using your Google Account storage.</p>
+        <div class="google-btn-wrapper">
+            <div id="googleSignInButton"></div>
+        </div>
     </div>
 
+    <!-- SCREEN 2: ACTIVE CHECKLIST INTERFACE -->
     <div id="appScreen">
         <header>
             <div>
@@ -130,7 +133,6 @@
             <div class="data-actions">
                 <button class="btn-secondary" onclick="exportData()">Export</button>
                 <button class="btn-secondary" onclick="document.getElementById('importFile').click()">Import</button>
-                <button class="btn-secondary" style="font-size: 0.85rem;" onclick="handleDisconnectClick()">Disconnect Account</button>
                 <input type="file" id="importFile" accept=".json" onchange="importData(event)">
             </div>
         </div>
@@ -157,7 +159,6 @@
     // =========================================================================
     let todos = [];
 
-    // Local execution instantly pulls from disk cache 
     document.addEventListener('DOMContentLoaded', () => {
         const storedTodos = localStorage.getItem('browser_checklist_tasks');
         if (storedTodos) {
@@ -281,6 +282,7 @@
     }
 
     function gisLoaded() {
+        // Build the token client structure used for silent background checks
         tokenClient = google.accounts.oauth2.initTokenClient({
             client_id: CLIENT_ID,
             scope: SCOPES,
@@ -292,7 +294,6 @@
                 accessToken = resp.access_token;
                 localStorage.setItem('has_linked_google', 'true');
                 
-                // Show core layout immediately upon successful auth handshake
                 document.getElementById('welcomeScreen').style.display = 'none';
                 document.getElementById('appScreen').style.display = 'block';
                 
@@ -300,42 +301,44 @@
                 await pullAndMergeCloudData();
             },
         });
+
+        // Initialize Native Sign-In Button Component
+        google.accounts.id.initialize({
+            client_id: CLIENT_ID,
+            callback: handleCredentialResponse
+        });
+        
+        google.accounts.id.renderButton(
+            document.getElementById("googleSignInButton"),
+            { theme: "outline", size: "large", width: "250" }
+        );
+
         gisimInited = true;
         evaluateRoutingSession();
     }
 
+    // Handles native button login response
+    function handleCredentialResponse(response) {
+        // Swap to token client context for data folder authorization
+        tokenClient.requestAccessToken({ prompt: 'consent' });
+    }
+
     window.addEventListener('load', () => { gapiLoaded(); gisLoaded(); });
 
-    // Handles view routing instantly based on authentication memory
     function evaluateRoutingSession() {
         if (!gapiInited || !gisimInited) return;
 
         if (localStorage.getItem('has_linked_google') === 'true') {
-            // User linked previously! Skip onboarding entirely, slide open application view
             document.getElementById('welcomeScreen').style.display = 'none';
             document.getElementById('appScreen').style.display = 'block';
             setSyncStatus("Connecting...", "active");
             
-            // SILENT RESTORATION: Request token in background with zero UI disturbance
+            // Background silent session restoration
             tokenClient.requestAccessToken({ prompt: 'none' });
         } else {
-            // Cold user state: Lock interface, keep welcome dialog open
             document.getElementById('welcomeScreen').style.display = 'block';
             document.getElementById('appScreen').style.display = 'none';
         }
-    }
-
-    function handleInitialLoginClick() {
-        if (!gapiInited || !gisimInited) return alert("Google integration initializing. Retrying...");
-        tokenClient.requestAccessToken({ prompt: 'consent' });
-    }
-
-    function handleDisconnectClick() {
-        localStorage.removeItem('has_linked_google');
-        accessToken = null;
-        // Shift views back to onboarding
-        document.getElementById('appScreen').style.display = 'none';
-        document.getElementById('welcomeScreen').style.display = 'block';
     }
 
     async function pullAndMergeCloudData() {
