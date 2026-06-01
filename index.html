@@ -30,13 +30,11 @@
         body { font-family: 'Inter', sans-serif; background-color: var(--background); color: var(--text); line-height: 1.5; padding: 2rem 1rem; }
         .container { max-width: 800px; margin: 0 auto; background: var(--surface); padding: 2rem; border-radius: var(--radius); box-shadow: var(--shadow); }
         
-        /* Onboarding Screen Layout */
         #welcomeScreen { text-align: center; padding: 3rem 1rem; display: none; }
         #welcomeScreen h1 { font-size: 2.25rem; font-weight: 800; margin-bottom: 1rem; }
         #welcomeScreen p { color: var(--text-muted); font-size: 1.1rem; max-width: 500px; margin: 0 auto 2.5rem auto; }
         .btn-large { padding: 0.85rem 2rem; font-size: 1.1rem; font-weight: 600; border-radius: 8px; box-shadow: 0 4px 6px -1px rgba(79, 70, 229, 0.4); }
 
-        /* Main App Area Layout */
         #appScreen { display: none; }
         
         header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem; flex-wrap: wrap; gap: 1rem; }
@@ -150,7 +148,7 @@
 
 <script>
     // =========================================================================
-    // SECTION 1: CORE APPLICATION STATE & LOCAL DOM ENGINE
+    // SECTION 1: CORE APPLICATION STATE & DOM INTERACTION
     // =========================================================================
     let todos = [];
 
@@ -250,7 +248,7 @@
     }
 
     // =========================================================================
-    // SECTION 2: AUTOMATED SILENT GOOGLE CLOUD SYNC ENGINE
+    // SECTION 2: SIMPLIFIED NATIVE GOOGLE STORAGE ENGINE
     // =========================================================================
     const CLIENT_ID = '305632493984-9q07n0i677ku1btdds1scke8pam5ag3s.apps.googleusercontent.com';
     const SCOPES = 'https://www.googleapis.com/auth/drive.appdata';
@@ -259,6 +257,7 @@
     let gapiInited = false;
     let gisimInited = false;
     let accessToken = null;
+    let cloudFileId = null;
 
     function setSyncStatus(text, type = '') {
         const el = document.getElementById('syncStatusIndicator');
@@ -286,9 +285,9 @@
                     throw resp;
                 }
                 accessToken = resp.access_token;
+                gapi.client.setToken({ access_token: accessToken });
                 localStorage.setItem('has_linked_google', 'true');
                 
-                // Route views straight to application layout
                 document.getElementById('welcomeScreen').style.display = 'none';
                 document.getElementById('appScreen').style.display = 'block';
                 
@@ -310,7 +309,7 @@
             document.getElementById('appScreen').style.display = 'block';
             setSyncStatus("Connecting...", "active");
             
-            // Reconnect silently on startup
+            // Background silent token check
             tokenClient.requestAccessToken({ prompt: 'none' });
         } else {
             document.getElementById('welcomeScreen').style.display = 'block';
@@ -319,21 +318,29 @@
     }
 
     function launchAuthenticationRequest() {
-        if (!gapiInited || !gisimInited) return alert("Google dependencies are still starting. Try again in a second.");
-        tokenClient.requestAccessToken({ prompt: 'consent' });
+        if (!gapiInited || !gisimInited) return alert("Google dependencies starting. Standby...");
+        tokenClient.requestAccessToken({ prompt: 'select_account consent' });
     }
 
     async function pullAndMergeCloudData() {
         if (!accessToken) return;
         try {
-            const response = await gapi.client.drive.files.list({ q: "name = 'todo_backup.json'", spaces: 'appDataFolder', fields: 'files(id, name)' });
+            const response = await gapi.client.drive.files.list({
+                q: "name = 'todo_backup.json' and trashed = false",
+                spaces: 'appDataFolder',
+                fields: 'files(id, name)'
+            });
+            
             const files = response.result.files;
-            let fileId = files.length > 0 ? files[0].id : null;
+            cloudFileId = files.length > 0 ? files[0].id : null;
 
-            if (fileId) {
-                const fileData = await gapi.client.drive.files.get({ fileId: fileId, alt: 'media' });
-                const remoteTodos = fileData.result;
+            if (cloudFileId) {
+                const fileData = await gapi.client.drive.files.get({
+                    fileId: cloudFileId,
+                    alt: 'media'
+                });
                 
+                const remoteTodos = fileData.result;
                 if (Array.isArray(remoteTodos)) {
                     const localMap = new Map(todos.map(item => [item.id, item]));
                     remoteTodos.forEach(item => localMap.set(item.id, item));
@@ -343,51 +350,60 @@
                     render();
                 }
             }
-            await uploadDataPayload(fileId);
-            setSyncStatus("Cloud Synced ✅", "active");
+            await autoUploadToCloud();
         } catch (err) {
-            if (err.status === 401 || err.error === "immediate_failed") {
-                setSyncStatus("Reconnecting...", "active");
-                tokenClient.requestAccessToken({ prompt: 'none' });
-            } else {
-                console.error(err);
-                setSyncStatus("Sync Error", "error");
-            }
+            console.error(err);
+            setSyncStatus("Sync Error", "error");
         }
     }
 
     async function autoUploadToCloud() {
         if (localStorage.getItem('has_linked_google') !== 'true' || !accessToken) return;
         setSyncStatus("Saving to Cloud...", "active");
+        
         try {
-            const response = await gapi.client.drive.files.list({ q: "name = 'todo_backup.json'", spaces: 'appDataFolder', fields: 'files(id, name)' });
-            const files = response.result.files;
-            let fileId = files.length > 0 ? files[0].id : null;
-            await uploadDataPayload(fileId);
+            if (!cloudFileId) {
+                // If cloud file handle is unknown, query or create it natively
+                const response = await gapi.client.drive.files.list({
+                    q: "name = 'todo_backup.json' and trashed = false",
+                    spaces: 'appDataFolder',
+                    fields: 'files(id)'
+                });
+                if (response.result.files.length > 0) {
+                    cloudFileId = response.result.files[0].id;
+                }
+            }
+
+            // High-compatibility structural endpoint write targeting the specific application space
+            const url = cloudFileId 
+                ? `https://www.googleapis.com/upload/drive/v3/files/${cloudFileId}?uploadType=media`
+                : 'https://www.googleapis.com/upload/drive/v3/files?uploadType=media';
+
+            const method = cloudFileId ? 'PATCH' : 'POST';
+
+            // Create file metadata dynamically if it's the initial write loop
+            if (!cloudFileId) {
+                const metaResp = await gapi.client.drive.files.create({
+                    resource: { name: 'todo_backup.json', parents: ['appDataFolder'] },
+                    fields: 'id'
+                });
+                cloudFileId = metaResp.result.id;
+                await autoUploadToCloud(); // Recurse now that the structural file ID container exists
+                return;
+            }
+
+            await gapi.client.request({
+                path: url,
+                method: method,
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(todos)
+            });
+
             setSyncStatus("Cloud Synced ✅", "active");
         } catch (err) {
-            console.error("Auto upload failed:", err);
+            console.error("Cloud tracking write error:", err);
             setSyncStatus("Sync Paused ⚠️", "error");
         }
-    }
-
-    async function uploadDataPayload(fileId) {
-        const boundary = 'foo_bar_baz';
-        const delimiter = "\r\n--" + boundary + "\r\n";
-        const close_delim = "\r\n--" + boundary + "--";
-        const metadata = { 'name': 'todo_backup.json', 'parents': ['appDataFolder'] };
-
-        const multipartRequestBody =
-            delimiter + 'Content-Type: application/json; charset=UTF-8\r\n\r\n' + JSON.stringify(metadata) +
-            delimiter + 'Content-Type: application/json\r\n\r\n' + JSON.stringify(todos) + close_delim;
-
-        await gapi.client.request({
-            'path': !fileId ? '/upload/drive/v3/files' : `/upload/drive/v3/files/${fileId}`,
-            'method': !fileId ? 'POST' : 'PATCH',
-            'params': { 'uploadType': 'multipart' },
-            'headers': { 'Content-Type': `multipart/related; boundary="${boundary}"` },
-            'body': multipartRequestBody
-        });
     }
 </script>
 </body>
