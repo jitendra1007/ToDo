@@ -8,7 +8,6 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     
-    <!-- Google Identity Services & Drive API Client -->
     <script src="https://accounts.google.com/gsi/client" async defer></script>
     <script src="https://apis.google.com/js/api.js" async defer></script>
 
@@ -35,7 +34,7 @@
         #welcomeScreen { text-align: center; padding: 3rem 1rem; display: none; }
         #welcomeScreen h1 { font-size: 2.25rem; font-weight: 800; margin-bottom: 1rem; }
         #welcomeScreen p { color: var(--text-muted); font-size: 1.1rem; max-width: 500px; margin: 0 auto 2.5rem auto; }
-        .google-btn-wrapper { display: inline-flex; justify-content: center; width: 100%; }
+        .btn-large { padding: 0.85rem 2rem; font-size: 1.1rem; font-weight: 600; border-radius: 8px; box-shadow: 0 4px 6px -1px rgba(79, 70, 229, 0.4); }
 
         /* Main App Area Layout */
         #appScreen { display: none; }
@@ -103,16 +102,12 @@
 
 <div class="container">
     
-    <!-- SCREEN 1: ONBOARDING WELCOME GATE -->
     <div id="welcomeScreen">
         <h1>To-Do Checklist</h1>
         <p>Keep your tasks completely synchronized between your desktop and mobile devices effortlessly using your Google Account storage.</p>
-        <div class="google-btn-wrapper">
-            <div id="googleSignInButton"></div>
-        </div>
+        <button class="btn-primary btn-large" onclick="launchAuthenticationRequest()">Continue with Google</button>
     </div>
 
-    <!-- SCREEN 2: ACTIVE CHECKLIST INTERFACE -->
     <div id="appScreen">
         <header>
             <div>
@@ -257,7 +252,7 @@
     // =========================================================================
     // SECTION 2: AUTOMATED SILENT GOOGLE CLOUD SYNC ENGINE
     // =========================================================================
-    const CLIENT_ID = '305632493984-9q07n0i677ku1btdds1scke8pam5ag3s.apps.googleusercontent.com';
+    const CLIENT_ID = 'YOUR_ACTUAL_CLIENT_ID_FROM_STEP_7.apps.googleusercontent.com';
     const SCOPES = 'https://www.googleapis.com/auth/drive.appdata';
 
     let tokenClient;
@@ -282,7 +277,6 @@
     }
 
     function gisLoaded() {
-        // Build the token client structure used for silent background checks
         tokenClient = google.accounts.oauth2.initTokenClient({
             client_id: CLIENT_ID,
             scope: SCOPES,
@@ -294,6 +288,7 @@
                 accessToken = resp.access_token;
                 localStorage.setItem('has_linked_google', 'true');
                 
+                // Route views straight to application layout
                 document.getElementById('welcomeScreen').style.display = 'none';
                 document.getElementById('appScreen').style.display = 'block';
                 
@@ -301,26 +296,8 @@
                 await pullAndMergeCloudData();
             },
         });
-
-        // Initialize Native Sign-In Button Component
-        google.accounts.id.initialize({
-            client_id: CLIENT_ID,
-            callback: handleCredentialResponse
-        });
-        
-        google.accounts.id.renderButton(
-            document.getElementById("googleSignInButton"),
-            { theme: "outline", size: "large", width: "250" }
-        );
-
         gisimInited = true;
         evaluateRoutingSession();
-    }
-
-    // Handles native button login response
-    function handleCredentialResponse(response) {
-        // Swap to token client context for data folder authorization
-        tokenClient.requestAccessToken({ prompt: 'consent' });
     }
 
     window.addEventListener('load', () => { gapiLoaded(); gisLoaded(); });
@@ -333,12 +310,17 @@
             document.getElementById('appScreen').style.display = 'block';
             setSyncStatus("Connecting...", "active");
             
-            // Background silent session restoration
+            // Reconnect silently on startup
             tokenClient.requestAccessToken({ prompt: 'none' });
         } else {
             document.getElementById('welcomeScreen').style.display = 'block';
             document.getElementById('appScreen').style.display = 'none';
         }
+    }
+
+    function launchAuthenticationRequest() {
+        if (!gapiInited || !gisimInited) return alert("Google dependencies are still starting. Try again in a second.");
+        tokenClient.requestAccessToken({ prompt: 'consent' });
     }
 
     async function pullAndMergeCloudData() {
