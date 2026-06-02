@@ -157,8 +157,9 @@
         if (storedTodos) {
             try { todos = JSON.parse(storedTodos); } catch (e) { todos = []; }
         }
+        // FIXED: A wiped browser defaults to time '0' so it always defers to the Cloud data
         if (!localStorage.getItem('browser_checklist_updated_at')) {
-            localStorage.setItem('browser_checklist_updated_at', Date.now().toString());
+            localStorage.setItem('browser_checklist_updated_at', "0");
         }
         render();
     });
