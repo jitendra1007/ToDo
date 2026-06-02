@@ -148,7 +148,7 @@
 
 <script>
     // =========================================================================
-    // SECTION 1: CORE APPLICATION STATE & DOM INTERACTION
+    // SECTION 1: TIMESTAMP-BASED DATA ARCHITECTURE
     // =========================================================================
     let todos = [];
 
@@ -157,11 +157,19 @@
         if (storedTodos) {
             try { todos = JSON.parse(storedTodos); } catch (e) { todos = []; }
         }
+        if (!localStorage.getItem('browser_checklist_updated_at')) {
+            localStorage.setItem('browser_checklist_updated_at', Date.now().toString());
+        }
         render();
     });
 
-    function saveToLocalStorage() {
-        localStorage.setItem('browser_checklist_tasks', JSON.stringify(todos));
+    function updateDataState(newTodos, timestamp = Date.now(), saveLocal = true) {
+        todos = newTodos;
+        if (saveLocal) {
+            localStorage.setItem('browser_checklist_tasks', JSON.stringify(todos));
+            localStorage.setItem('browser_checklist_updated_at', timestamp.toString());
+        }
+        render();
     }
 
     function render() {
@@ -203,23 +211,20 @@
         if (!text) return;
 
         todos.push({ id: Date.now().toString(36) + Math.random().toString(36).substr(2, 5), text, completed: false });
-        saveToLocalStorage();
-        render();
+        updateDataState(todos, Date.now(), true);
         input.value = '';
         autoUploadToCloud();
     }
 
     function toggleTask(id) {
         todos = todos.map(t => t.id === id ? { ...t, completed: !t.completed } : t);
-        saveToLocalStorage();
-        render();
+        updateDataState(todos, Date.now(), true);
         autoUploadToCloud();
     }
 
     function deleteTask(id) {
         todos = todos.filter(t => t.id !== id);
-        saveToLocalStorage();
-        render();
+        updateDataState(todos, Date.now(), true);
         autoUploadToCloud();
     }
 
@@ -236,7 +241,7 @@
         reader.onload = function(e) {
             try {
                 const parsed = JSON.parse(e.target.result);
-                if (Array.isArray(parsed)) { todos = parsed; saveToLocalStorage(); render(); autoUploadToCloud(); }
+                if (Array.isArray(parsed)) { updateDataState(parsed, Date.now(), true); autoUploadToCloud(); }
             } catch(err) { alert("Invalid JSON file."); }
         };
         reader.readAsText(file);
@@ -248,7 +253,7 @@
     }
 
     // =========================================================================
-    // SECTION 2: SIMPLIFIED NATIVE GOOGLE STORAGE ENGINE
+    // SECTION 2: TOKEN-CACHED REALTIME CLOUD SYNC ENGINE
     // =========================================================================
     const CLIENT_ID = '305632493984-9q07n0i677ku1btdds1scke8pam5ag3s.apps.googleusercontent.com';
     const SCOPES = 'https://www.googleapis.com/auth/drive.appdata';
@@ -281,16 +286,19 @@
             scope: SCOPES,
             callback: async (resp) => {
                 if (resp.error !== undefined) {
-                    setSyncStatus("Sync Paused ❌", "error");
-                    throw resp;
+                    console.error("Authentication rejected:", resp);
+                    handleAuthFailure();
+                    return;
                 }
                 accessToken = resp.access_token;
                 gapi.client.setToken({ access_token: accessToken });
+                
+                // Securely lease token into browser space for 1 hour to prevent mobile tracking blocks
+                localStorage.setItem('google_access_token', accessToken);
+                localStorage.setItem('google_token_expiry', (Date.now() + (resp.expires_in * 1000)).toString());
                 localStorage.setItem('has_linked_google', 'true');
                 
-                document.getElementById('welcomeScreen').style.display = 'none';
-                document.getElementById('appScreen').style.display = 'block';
-                
+                showAppScreen();
                 setSyncStatus("Syncing...", "active");
                 await pullAndMergeCloudData();
             },
@@ -305,20 +313,45 @@
         if (!gapiInited || !gisimInited) return;
 
         if (localStorage.getItem('has_linked_google') === 'true') {
-            document.getElementById('welcomeScreen').style.display = 'none';
-            document.getElementById('appScreen').style.display = 'block';
-            setSyncStatus("Connecting...", "active");
-            
-            // Background silent token check
-            tokenClient.requestAccessToken({ prompt: 'none' });
+            const cachedToken = localStorage.getItem('google_access_token');
+            const expiry = parseInt(localStorage.getItem('google_token_expiry') || '0');
+
+            if (cachedToken && Date.now() < expiry) {
+                // TOKEN IS VALID: Use immediately. Avoids network round trips and mobile hangs.
+                accessToken = cachedToken;
+                gapi.client.setToken({ access_token: accessToken });
+                showAppScreen();
+                setSyncStatus("Cloud Synced ✅", "active");
+                pullAndMergeCloudData(); 
+            } else {
+                // TOKEN EXPIRED: Attemping silent verification 
+                showAppScreen();
+                setSyncStatus("Connecting...", "active");
+                tokenClient.requestAccessToken({ prompt: 'none' });
+            }
         } else {
-            document.getElementById('welcomeScreen').style.display = 'block';
-            document.getElementById('appScreen').style.display = 'none';
+            showWelcomeScreen();
         }
     }
 
+    function handleAuthFailure() {
+        localStorage.removeItem('google_access_token');
+        setSyncStatus("Sync Paused ⚠️", "error");
+        showWelcomeScreen();
+    }
+
+    function showAppScreen() {
+        document.getElementById('welcomeScreen').style.display = 'none';
+        document.getElementById('appScreen').style.display = 'block';
+    }
+
+    function showWelcomeScreen() {
+        document.getElementById('welcomeScreen').style.display = 'block';
+        document.getElementById('appScreen').style.display = 'none';
+    }
+
     function launchAuthenticationRequest() {
-        if (!gapiInited || !gisimInited) return alert("Google dependencies starting. Standby...");
+        if (!gapiInited || !gisimInited) return alert("System booting. Please retry in a moment.");
         tokenClient.requestAccessToken({ prompt: 'select_account consent' });
     }
 
@@ -335,25 +368,31 @@
             cloudFileId = files.length > 0 ? files[0].id : null;
 
             if (cloudFileId) {
-                const fileData = await gapi.client.drive.files.get({
-                    fileId: cloudFileId,
-                    alt: 'media'
-                });
-                
-                const remoteTodos = fileData.result;
-                if (Array.isArray(remoteTodos)) {
-                    const localMap = new Map(todos.map(item => [item.id, item]));
-                    remoteTodos.forEach(item => localMap.set(item.id, item));
-                    todos = Array.from(localMap.values());
-                    
-                    saveToLocalStorage();
-                    render();
+                const fileData = await gapi.client.drive.files.get({ fileId: cloudFileId, alt: 'media' });
+                const remotePayload = fileData.result;
+                let localLastUpdated = parseInt(localStorage.getItem('browser_checklist_updated_at') || '0');
+
+                if (remotePayload && remotePayload.updatedAt) {
+                    // Compare structural timestamps across devices
+                    if (remotePayload.updatedAt > localLastUpdated) {
+                        // Cloud has fresher actions (e.g. phone changes). Overwrite local client state.
+                        updateDataState(remotePayload.todos, remotePayload.updatedAt, true);
+                    } else if (remotePayload.updatedAt < localLastUpdated) {
+                        // Desktop has fresher local modifications. Overwrite cloud immediately.
+                        await autoUploadToCloud();
+                    }
+                } else if (Array.isArray(remotePayload)) {
+                    // Legacy list recovery channel
+                    updateDataState(remotePayload, Date.now(), true);
+                    await autoUploadToCloud();
                 }
+            } else {
+                await autoUploadToCloud();
             }
-            await autoUploadToCloud();
+            setSyncStatus("Cloud Synced ✅", "active");
         } catch (err) {
-            console.error(err);
-            setSyncStatus("Sync Error", "error");
+            console.error("Sync pull execution exception:", err);
+            if (err.status === 401) handleAuthFailure();
         }
     }
 
@@ -363,7 +402,6 @@
         
         try {
             if (!cloudFileId) {
-                // If cloud file handle is unknown, query or create it natively
                 const response = await gapi.client.drive.files.list({
                     q: "name = 'todo_backup.json' and trashed = false",
                     spaces: 'appDataFolder',
@@ -371,38 +409,35 @@
                 });
                 if (response.result.files.length > 0) {
                     cloudFileId = response.result.files[0].id;
+                } else {
+                    const metaResp = await gapi.client.drive.files.create({
+                        resource: { name: 'todo_backup.json', parents: ['appDataFolder'] },
+                        fields: 'id'
+                    });
+                    cloudFileId = metaResp.result.id;
                 }
             }
 
-            // High-compatibility structural endpoint write targeting the specific application space
-            const url = cloudFileId 
-                ? `https://www.googleapis.com/upload/drive/v3/files/${cloudFileId}?uploadType=media`
-                : 'https://www.googleapis.com/upload/drive/v3/files?uploadType=media';
-
-            const method = cloudFileId ? 'PATCH' : 'POST';
-
-            // Create file metadata dynamically if it's the initial write loop
-            if (!cloudFileId) {
-                const metaResp = await gapi.client.drive.files.create({
-                    resource: { name: 'todo_backup.json', parents: ['appDataFolder'] },
-                    fields: 'id'
-                });
-                cloudFileId = metaResp.result.id;
-                await autoUploadToCloud(); // Recurse now that the structural file ID container exists
-                return;
-            }
+            let localLastUpdated = localStorage.getItem('browser_checklist_updated_at') || Date.now().toString();
+            
+            // Structured data model wrapper payload containing items and timestamp metadata
+            const payload = {
+                todos: todos,
+                updatedAt: parseInt(localLastUpdated)
+            };
 
             await gapi.client.request({
-                path: url,
-                method: method,
+                path: `https://www.googleapis.com/upload/drive/v3/files/${cloudFileId}?uploadType=media`,
+                method: 'PATCH',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(todos)
+                body: JSON.stringify(payload)
             });
 
             setSyncStatus("Cloud Synced ✅", "active");
         } catch (err) {
-            console.error("Cloud tracking write error:", err);
+            console.error("Cloud engine commit intercept:", err);
             setSyncStatus("Sync Paused ⚠️", "error");
+            if (err.status === 401) handleAuthFailure();
         }
     }
 </script>
