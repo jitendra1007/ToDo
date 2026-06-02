@@ -441,6 +441,34 @@
             if (err.status === 401) handleAuthFailure();
         }
     }
+    // =========================================================================
+    // SECTION 3: MICRO-INTERACTION SYNC ENGINE (OPTION 4)
+    // =========================================================================
+    
+    // Set the initial clock so it doesn't double-trigger on first load
+    let lastInteractionSyncTime = Date.now(); 
+    const SYNC_COOLDOWN_MS = 15000; // 15 seconds cooldown
+
+    function handleMicroInteraction() {
+        // Stop completely if the user is not logged in or the token is missing
+        if (localStorage.getItem('has_linked_google') !== 'true' || !accessToken) return;
+
+        const now = Date.now();
+        // If 15 seconds have passed since the last interaction check
+        if (now - lastInteractionSyncTime > SYNC_COOLDOWN_MS) {
+            lastInteractionSyncTime = now; // Reset the clock immediately
+            
+            // Trigger the background pull
+            setSyncStatus("Checking...", "active");
+            pullAndMergeCloudData();
+        }
+    }
+
+    // Listeners for physical user presence and tab focus
+    window.addEventListener('mousemove', handleMicroInteraction);
+    window.addEventListener('keydown', handleMicroInteraction);
+    window.addEventListener('touchstart', handleMicroInteraction, { passive: true });
+    window.addEventListener('focus', handleMicroInteraction);
 </script>
 </body>
 </html>
