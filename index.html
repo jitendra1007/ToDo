@@ -94,6 +94,7 @@
             .data-actions { width: 100%; justify-content: space-between; }
             .data-actions button { flex: 1; justify-content: center; }
         }
+        .btn-danger-text:hover { color: var(--danger) !important; border-color: var(--danger) !important; background-color: #fef2f2; }
     </style>
 </head>
 <body>
@@ -127,6 +128,7 @@
                 <button class="btn-secondary" onclick="exportData()">Export</button>
                 <button class="btn-secondary" onclick="document.getElementById('importFile').click()">Import</button>
                 <input type="file" id="importFile" accept=".json" onchange="importData(event)">
+                <button class="btn-secondary btn-danger-text" onclick="clearAllData()">Clear Data</button>
             </div>
         </div>
 
@@ -247,6 +249,16 @@
         };
         reader.readAsText(file);
         event.target.value = '';
+    }
+    function clearAllData() {
+    // 1. Double check with the user so they don't lose data accidentally
+    if (!confirm("Are you sure you want to delete all tasks? This will wipe your local screen and your cloud backup instantly.")) return;
+
+    // 2. Set the application state to a completely empty array, tagged with a brand new timestamp
+    updateDataState([], Date.now(), true);
+
+    // 3. Force the sync engine to immediately overwrite the master cloud file with the blank list
+    autoUploadToCloud();
     }
 
     function escapeHTML(str) {
