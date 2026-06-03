@@ -4,7 +4,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Cloud To-Do Checklist</title>
-    <script src="https://apis.google.com/js/api.js"></script>
+    <script async defer src="https://apis.google.com/js/api.js" onload="gapiLoaded()"></script>
+    <script async defer src="https://accounts.google.com/gsi/client" onload="gisLoaded()"></script>
     <style>
         :root {
             --primary: #2563eb;
@@ -345,51 +346,72 @@
     window.addEventListener('focus', handleMicroInteraction); 
 
     // =========================================================================
-    // SECTION 5: GOOGLE AUTHENTICATION INIT
+    // SECTION 5: MODERN GOOGLE IDENTITY SERVICES (GIS) INIT
     // =========================================================================
-    function initClient() {
-        gapi.client.init({
-            apiKey: API_KEY,
-            clientId: CLIENT_ID,
-            discoveryDocs: DISCOVERY_DOCS,
-            scope: SCOPES,
-            // ADD THESE TWO LINES BELOW TO FIX THE POPUP SIGN-IN LOOP:
-            cookiepolicy: 'single_host_origin',
-            plugin_name: 'todo_app' 
-        }).then(() => {
-            const authInstance = gapi.auth2.getAuthInstance();
-            authInstance.isSignedIn.listen(updateSigninStatus);
-            updateSigninStatus(authInstance.isSignedIn.get());
-        }).catch(err => console.error("Auth Init Error", err));
+    let tokenClient;
+    let gapiInited = false;
+    let gisInited = false;
+
+    // 1. Initialize the Google Drive API (GAPI)
+    function gapiLoaded() {
+        gapi.load('client', async () => {
+            await gapi.client.init({
+                apiKey: API_KEY,
+                discoveryDocs: DISCOVERY_DOCS,
+            });
+            gapiInited = true;
+            checkIfReady();
+        });
     }
-    function updateSigninStatus(isSignedIn) {
-        if (isSignedIn) {
-            const user = gapi.auth2.getAuthInstance().currentUser.get();
-            accessToken = user.getAuthResponse().access_token;
-            localStorage.setItem('has_linked_google', 'true');
-            document.getElementById('authScreen').style.display = 'none';
-            document.getElementById('appScreen').style.display = 'block';
-            render();
-            pullAndMergeCloudData(); // Initial load sync
-        } else {
-            handleAuthFailure();
+
+    // 2. Initialize the Authentication System (GIS)
+    function gisLoaded() {
+        tokenClient = google.accounts.oauth2.initTokenClient({
+            client_id: CLIENT_ID,
+            scope: SCOPES,
+            callback: (tokenResponse) => {
+                if (tokenResponse && tokenResponse.access_token) {
+                    accessToken = tokenResponse.access_token;
+                    localStorage.setItem('has_linked_google', 'true');
+                    document.getElementById('authScreen').style.display = 'none';
+                    document.getElementById('appScreen').style.display = 'block';
+                    render();
+                    pullAndMergeCloudData(); 
+                }
+            },
+        });
+        gisInited = true;
+        checkIfReady();
+    }
+
+    // 3. Ensure both libraries are loaded before allowing logins
+    function checkIfReady() {
+        if (gapiInited && gisInited) {
+            // If they logged in previously, we can try to silently grab a token without a prompt
+            if (localStorage.getItem('has_linked_google') === 'true') {
+                tokenClient.requestAccessToken({ prompt: '' });
+            }
         }
     }
 
-    function handleAuthClick() { gapi.auth2.getAuthInstance().signIn(); }
-    function handleSignoutClick() { gapi.auth2.getAuthInstance().signOut(); }
-    
-    function handleAuthFailure() {
-        accessToken = null;
+    // 4. Button Click Handlers
+    function handleAuthClick() {
+        // Forces the popup to show if the user clicks the button
+        tokenClient.requestAccessToken({ prompt: 'consent' });
+    }
+
+    function handleSignoutClick() {
+        if (accessToken) {
+            google.accounts.oauth2.revoke(accessToken, () => { console.log('Access revoked'); });
+            accessToken = null;
+        }
         localStorage.setItem('has_linked_google', 'false');
         document.getElementById('authScreen').style.display = 'block';
         document.getElementById('appScreen').style.display = 'none';
     }
 
-    window.onload = () => {
-        render(); // Render offline cache immediately
-        gapi.load('client:auth2', initClient);
-    };
+    // We no longer use window.onload here because the scripts load asynchronously via the HTML tags{
+    render(); // Render offline cache immediately
 </script>
 
 </body>
