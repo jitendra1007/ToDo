@@ -352,14 +352,16 @@
             apiKey: API_KEY,
             clientId: CLIENT_ID,
             discoveryDocs: DISCOVERY_DOCS,
-            scope: SCOPES
+            scope: SCOPES,
+            // ADD THESE TWO LINES BELOW TO FIX THE POPUP SIGN-IN LOOP:
+            cookiepolicy: 'single_host_origin',
+            plugin_name: 'todo_app' 
         }).then(() => {
             const authInstance = gapi.auth2.getAuthInstance();
             authInstance.isSignedIn.listen(updateSigninStatus);
             updateSigninStatus(authInstance.isSignedIn.get());
         }).catch(err => console.error("Auth Init Error", err));
     }
-
     function updateSigninStatus(isSignedIn) {
         if (isSignedIn) {
             const user = gapi.auth2.getAuthInstance().currentUser.get();
