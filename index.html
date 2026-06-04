@@ -296,6 +296,12 @@
         if (el) {
             el.innerText = text;
             el.className = 'sync-status ' + type;
+            
+            // Automatically remove the clickable state when things are working normally
+            if (type !== 'error') {
+                el.style.cursor = 'default';
+                el.onclick = null;
+            }
         }
     }
 
@@ -344,29 +350,42 @@
             const expiry = parseInt(localStorage.getItem('google_token_expiry') || '0');
 
             if (cachedToken && Date.now() < expiry) {
-                // TOKEN IS VALID: Use immediately. Avoids network round trips and mobile hangs.
+                // TOKEN IS VALID: Use immediately.
                 accessToken = cachedToken;
                 gapi.client.setToken({ access_token: accessToken });
                 showAppScreen();
                 setSyncStatus("Cloud Synced ✅", "active");
                 pullAndMergeCloudData(); 
             } else {
-                // TOKEN EXPIRED: Attemping silent verification 
+                // TOKEN EXPIRED: Mobile browsers block silent refreshes. 
+                // We must trigger the visual reconnect state.
                 showAppScreen();
-                setSyncStatus("Connecting...", "active");
-                tokenClient.requestAccessToken({ prompt: 'none' });
+                triggerReconnectState();
             }
         } else {
             showWelcomeScreen();
         }
     }
 
-    function handleAuthFailure() {
-        localStorage.removeItem('google_access_token');
-        setSyncStatus("Sync Paused ⚠️", "error");
-        showWelcomeScreen();
+    function triggerReconnectState() {
+        const statusEl = document.getElementById('syncStatusIndicator');
+        setSyncStatus("Session Expired - Tap to Reconnect 🔄", "error");
+        
+        // Turn the indicator into a clickable button to bypass mobile pop-up blockers
+        statusEl.style.cursor = "pointer";
+        statusEl.onclick = () => {
+            setSyncStatus("Connecting...", "active");
+            // Firing a standard request (without prompt: 'none') is allowed by mobile OS
+            tokenClient.requestAccessToken({ prompt: '' }); 
+        };
     }
 
+    function handleAuthFailure() {
+        // Instead of booting the user out to the Welcome screen, we just pause the sync
+        // and allow them to reconnect when they are ready.
+        localStorage.removeItem('google_access_token');
+        triggerReconnectState();
+    }
     function showAppScreen() {
         document.getElementById('welcomeScreen').style.display = 'none';
         document.getElementById('appScreen').style.display = 'block';
