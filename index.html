@@ -152,25 +152,21 @@
     // =========================================================================
     // SECTION 1: TIMESTAMP-BASED DATA ARCHITECTURE
     // =========================================================================
-    let todos = [];
+    let databaseArray = []; // The generic container for all data envelopes
 
     document.addEventListener('DOMContentLoaded', () => {
-        const storedTodos = localStorage.getItem('browser_checklist_tasks');
-        if (storedTodos) {
-            try { todos = JSON.parse(storedTodos); } catch (e) { todos = []; }
-        }
-        // FIXED: A wiped browser defaults to time '0' so it always defers to the Cloud data
-        if (!localStorage.getItem('browser_checklist_updated_at')) {
-            localStorage.setItem('browser_checklist_updated_at', "0");
+        // We use a new storage key to start with a fresh slate for the new architecture
+        const storedData = localStorage.getItem('generic_app_data');
+        if (storedData) {
+            try { databaseArray = JSON.parse(storedData); } catch (e) { databaseArray = []; }
         }
         render();
     });
 
-    function updateDataState(newTodos, timestamp = Date.now(), saveLocal = true) {
-        todos = newTodos;
+    function updateDataState(newData, saveLocal = true) {
+        databaseArray = newData;
         if (saveLocal) {
-            localStorage.setItem('browser_checklist_tasks', JSON.stringify(todos));
-            localStorage.setItem('browser_checklist_updated_at', timestamp.toString());
+            localStorage.setItem('generic_app_data', JSON.stringify(databaseArray));
         }
         render();
     }
@@ -180,31 +176,35 @@
         const emptyState = document.getElementById('emptyState');
         tbody.innerHTML = '';
 
-        if (todos.length === 0) {
+        // UNPACKING: Filter for records that belong to 'tasks' and are NOT soft-deleted
+        const visibleTasks = databaseArray.filter(record => record.table === 'tasks' && !record.deleted);
+
+        if (visibleTasks.length === 0) {
             emptyState.style.display = 'block';
         } else {
             emptyState.style.display = 'none';
-            todos.forEach(todo => {
+            visibleTasks.forEach(record => {
+                const taskData = record.data; // The inner UI payload
                 const tr = document.createElement('tr');
-                if (todo.completed) tr.classList.add('completed');
+                if (taskData.completed) tr.classList.add('completed');
                 tr.innerHTML = `
                     <td class="col-status">
                         <label class="checkbox-container">
-                            <input type="checkbox" ${todo.completed ? 'checked' : ''} onchange="toggleTask('${todo.id}')">
+                            <input type="checkbox" ${taskData.completed ? 'checked' : ''} onchange="toggleTask('${record.id}')">
                             <span class="checkmark"></span>
                         </label>
                     </td>
-                    <td class="col-task"><span class="task-text">${escapeHTML(todo.text)}</span></td>
-                    <td class="col-actions"><button class="btn-danger" onclick="deleteTask('${todo.id}')">Delete</button></td>
+                    <td class="col-task"><span class="task-text">${escapeHTML(taskData.text)}</span></td>
+                    <td class="col-actions"><button class="btn-danger" onclick="deleteTask('${record.id}')">Delete</button></td>
                 `;
                 tbody.appendChild(tr);
             });
         }
-        updateMetric();
+        updateMetric(visibleTasks);
     }
 
-    function updateMetric() {
-        document.getElementById('incompleteCount').textContent = todos.filter(t => !t.completed).length;
+    function updateMetric(visibleTasks) {
+        document.getElementById('incompleteCount').textContent = visibleTasks.filter(r => !r.data.completed).length;
     }
 
     function addTask(event) {
@@ -213,27 +213,43 @@
         const text = input.value.trim();
         if (!text) return;
 
-        todos.push({ id: Date.now().toString(36) + Math.random().toString(36).substr(2, 5), text, completed: false });
-        updateDataState(todos, Date.now(), true);
+        // PACKING: Wrap the task in the Data Envelope
+        databaseArray.push({
+            id: "tsk_" + Date.now().toString(36) + Math.random().toString(36).substr(2, 5),
+            table: "tasks", 
+            updatedAt: Date.now(), 
+            deleted: false,
+            data: { text: text, completed: false }
+        });
+        
+        updateDataState(databaseArray, true);
         input.value = '';
         autoUploadToCloud();
     }
 
     function toggleTask(id) {
-        todos = todos.map(t => t.id === id ? { ...t, completed: !t.completed } : t);
-        updateDataState(todos, Date.now(), true);
+        // Find the envelope, update the outer timestamp, toggle inner status
+        databaseArray = databaseArray.map(record => 
+            record.id === id 
+                ? { ...record, updatedAt: Date.now(), data: { ...record.data, completed: !record.data.completed } } 
+                : record
+        );
+        updateDataState(databaseArray, true);
         autoUploadToCloud();
     }
 
     function deleteTask(id) {
-        todos = todos.filter(t => t.id !== id);
-        updateDataState(todos, Date.now(), true);
+        // SOFT DELETE: We do not filter it out! We flag it as deleted and update the timestamp.
+        databaseArray = databaseArray.map(record => 
+            record.id === id ? { ...record, deleted: true, updatedAt: Date.now() } : record
+        );
+        updateDataState(databaseArray, true);
         autoUploadToCloud();
     }
 
     function exportData() {
-        if (!todos.length) return alert("No data to export.");
-        const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(todos, null, 2));
+        if (!databaseArray.length) return alert("No data to export.");
+        const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(databaseArray, null, 2));
         const a = document.createElement('a'); a.setAttribute("href", dataStr); a.setAttribute("download", "todo_export.json"); a.click();
     }
 
@@ -251,16 +267,14 @@
         event.target.value = '';
     }
     function clearAllData() {
-    // 1. Double check with the user so they don't lose data accidentally
-    if (!confirm("Are you sure you want to delete all tasks? This will wipe your local screen and your cloud backup instantly.")) return;
-
-    // 2. Set the application state to a completely empty array, tagged with a brand new timestamp
-    updateDataState([], Date.now(), true);
-
-    // 3. Force the sync engine to immediately overwrite the master cloud file with the blank list
-    autoUploadToCloud();
+        if (!confirm("Are you sure you want to delete all tasks? This will wipe your local screen and your cloud backup instantly.")) return;
+        // Soft delete all task records
+        databaseArray = databaseArray.map(record => 
+            record.table === 'tasks' ? { ...record, deleted: true, updatedAt: Date.now() } : record
+        );
+        updateDataState(databaseArray, true);
+        autoUploadToCloud();
     }
-
     function escapeHTML(str) {
         return str.replace(/[&<>'"]/g, t => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[t] || t));
     }
@@ -383,21 +397,31 @@
             if (cloudFileId) {
                 const fileData = await gapi.client.drive.files.get({ fileId: cloudFileId, alt: 'media' });
                 const remotePayload = fileData.result;
-                let localLastUpdated = parseInt(localStorage.getItem('browser_checklist_updated_at') || '0');
 
-                if (remotePayload && remotePayload.updatedAt) {
-                    // Compare structural timestamps across devices
-                    if (remotePayload.updatedAt > localLastUpdated) {
-                        // Cloud has fresher actions (e.g. phone changes). Overwrite local client state.
-                        updateDataState(remotePayload.todos, remotePayload.updatedAt, true);
-                    } else if (remotePayload.updatedAt < localLastUpdated) {
-                        // Desktop has fresher local modifications. Overwrite cloud immediately.
-                        await autoUploadToCloud();
-                    }
-                } else if (Array.isArray(remotePayload)) {
-                    // Legacy list recovery channel
-                    updateDataState(remotePayload, Date.now(), true);
-                    await autoUploadToCloud();
+                // Look for the generic "records" array
+                if (remotePayload && remotePayload.records) {
+                    const cloudRecords = remotePayload.records;
+                    const mergedMap = new Map();
+                    
+                    // 1. Load Cloud Envelopes into the Map
+                    cloudRecords.forEach(item => mergedMap.set(item.id, item));
+                    
+                    // 2. Compare Local Envelopes vs Cloud Envelopes item-by-item
+                    let localHasNewerEdits = false;
+                    databaseArray.forEach(localItem => {
+                        const cloudItem = mergedMap.get(localItem.id);
+                        // If local item is newer, or it doesn't exist in the cloud yet, local wins
+                        if (!cloudItem || (localItem.updatedAt > (cloudItem.updatedAt || 0))) {
+                            mergedMap.set(localItem.id, localItem);
+                            localHasNewerEdits = true;
+                        }
+                    });
+                    
+                    // Update our screen with the perfectly merged data
+                    const finalMergedRecords = Array.from(mergedMap.values());
+                    updateDataState(finalMergedRecords, true);
+                    
+                    if (localHasNewerEdits) await autoUploadToCloud();
                 }
             } else {
                 await autoUploadToCloud();
@@ -430,14 +454,9 @@
                     cloudFileId = metaResp.result.id;
                 }
             }
-
-            let localLastUpdated = localStorage.getItem('browser_checklist_updated_at') || Date.now().toString();
             
-            // Structured data model wrapper payload containing items and timestamp metadata
-            const payload = {
-                todos: todos,
-                updatedAt: parseInt(localLastUpdated)
-            };
+            // Upload the generic database array
+            const payload = { records: databaseArray };
 
             await gapi.client.request({
                 path: `https://www.googleapis.com/upload/drive/v3/files/${cloudFileId}?uploadType=media`,
