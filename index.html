@@ -95,26 +95,22 @@
             .data-actions button { flex: 1; justify-content: center; }
         }
         .btn-danger-text:hover { color: var(--danger) !important; border-color: var(--danger) !important; background-color: #fef2f2; }
+        .btn-sm { padding: 0.4rem 0.8rem; font-size: 0.85rem; }
     </style>
 </head>
 <body>
 
 <div class="container">
     
-    <div id="welcomeScreen">
-        <h1>To-Do Checklist</h1>
-        <p>Keep your tasks completely synchronized between your desktop and mobile devices effortlessly using your Google Account storage.</p>
-        <button class="btn-primary btn-large" onclick="launchAuthenticationRequest()">Continue with Google</button>
-    </div>
-
     <div id="appScreen">
         <header>
             <div>
                 <h1>To-Do Checklist</h1>
-                <div id="syncStatusIndicator" class="sync-status">Connecting...</div>
+                <div id="syncStatusIndicator" class="sync-status">Offline</div>
             </div>
             <div class="header-badges">
                 <div class="metric-badge"><span id="incompleteCount">0</span> remaining</div>
+                <button id="authBtn" class="btn-primary btn-sm" onclick="handleAuthClick()">Connect Drive</button>
             </div>
         </header>
 
@@ -290,6 +286,7 @@
     let gisimInited = false;
     let accessToken = null;
     let cloudFileId = null;
+    let silentRefreshTimeout = null;
 
     function setSyncStatus(text, type = '') {
         const el = document.getElementById('syncStatusIndicator');
@@ -318,28 +315,36 @@
             client_id: CLIENT_ID,
             scope: SCOPES,
             callback: async (resp) => {
+                
+                if (silentRefreshTimeout) {
+                    clearTimeout(silentRefreshTimeout);
+                    silentRefreshTimeout = null;
+                }
+
                 if (resp.error !== undefined) {
-                    console.error("Authentication rejected:", resp);
-                    handleAuthFailure();
+                    triggerReconnectState();
                     return;
                 }
+                
                 accessToken = resp.access_token;
                 gapi.client.setToken({ access_token: accessToken });
                 
-                // Securely lease token into browser space for 1 hour to prevent mobile tracking blocks
                 localStorage.setItem('google_access_token', accessToken);
                 localStorage.setItem('google_token_expiry', (Date.now() + (resp.expires_in * 1000)).toString());
                 localStorage.setItem('has_linked_google', 'true');
                 
-                showAppScreen();
-                setSyncStatus("Syncing...", "active");
+                updateAuthUI(true);
+                setSyncStatus("Cloud Synced ✅", "active");
+                
+                const statusEl = document.getElementById('syncStatusIndicator');
+                if(statusEl) { statusEl.style.cursor = 'default'; statusEl.onclick = null; }
+                
                 await pullAndMergeCloudData();
             },
         });
         gisimInited = true;
         evaluateRoutingSession();
     }
-
     window.addEventListener('load', () => { gapiLoaded(); gisLoaded(); });
 
     function evaluateRoutingSession() {
@@ -350,23 +355,29 @@
             const expiry = parseInt(localStorage.getItem('google_token_expiry') || '0');
 
             if (cachedToken && Date.now() < expiry) {
-                // TOKEN IS VALID: Use immediately.
+                // TOKEN IS VALID
                 accessToken = cachedToken;
                 gapi.client.setToken({ access_token: accessToken });
-                showAppScreen();
+                updateAuthUI(true);
                 setSyncStatus("Cloud Synced ✅", "active");
                 pullAndMergeCloudData(); 
             } else {
-                // TOKEN EXPIRED: Mobile browsers block silent refreshes. 
-                // We must trigger the visual reconnect state.
-                showAppScreen();
-                triggerReconnectState();
+                // TOKEN EXPIRED: Attempt silent refresh
+                updateAuthUI(true);
+                setSyncStatus("Reconnecting...", "active");
+                
+                silentRefreshTimeout = setTimeout(() => {
+                    console.warn("Silent refresh timed out. Forcing manual reconnect button.");
+                    triggerReconnectState();
+                }, 4000);
+
+                tokenClient.requestAccessToken({ prompt: 'none' }); 
             }
         } else {
-            showWelcomeScreen();
+            // NEVER CONNECTED OR DISCONNECTED
+            updateAuthUI(false);
         }
     }
-
     function triggerReconnectState() {
         const statusEl = document.getElementById('syncStatusIndicator');
         setSyncStatus("Session Expired - Tap to Reconnect 🔄", "error");
@@ -380,27 +391,42 @@
         };
     }
 
-    function handleAuthFailure() {
-        // Instead of booting the user out to the Welcome screen, we just pause the sync
-        // and allow them to reconnect when they are ready.
+function handleAuthFailure() {
         localStorage.removeItem('google_access_token');
-        triggerReconnectState();
+        updateAuthUI(false);
     }
-    function showAppScreen() {
-        document.getElementById('welcomeScreen').style.display = 'none';
-        document.getElementById('appScreen').style.display = 'block';
-    }
-
-    function showWelcomeScreen() {
-        document.getElementById('welcomeScreen').style.display = 'block';
-        document.getElementById('appScreen').style.display = 'none';
-    }
-
-    function launchAuthenticationRequest() {
-        if (!gapiInited || !gisimInited) return alert("System booting. Please retry in a moment.");
-        tokenClient.requestAccessToken({ prompt: 'select_account consent' });
+    function updateAuthUI(isConnected) {
+        const authBtn = document.getElementById('authBtn');
+        if (isConnected) {
+            authBtn.textContent = 'Disconnect';
+            authBtn.className = 'btn-secondary btn-sm btn-danger-text';
+        } else {
+            authBtn.textContent = 'Connect Drive';
+            authBtn.className = 'btn-primary btn-sm';
+            setSyncStatus("Offline", "");
+        }
     }
 
+    function handleAuthClick() {
+        if (localStorage.getItem('has_linked_google') === 'true') {
+            // DISCONNECT LOGIC
+            if (accessToken) {
+                // Tell Google to securely kill the live token
+                google.accounts.oauth2.revoke(accessToken, () => { console.log('Access token revoked'); });
+                accessToken = null;
+            }
+            // Wipe the browser memory
+            localStorage.setItem('has_linked_google', 'false');
+            localStorage.removeItem('google_access_token');
+            localStorage.removeItem('google_token_expiry');
+            updateAuthUI(false);
+        } else {
+            // CONNECT LOGIC
+            if (!gapiInited || !gisimInited) return alert("System booting. Please retry in a moment.");
+            setSyncStatus("Connecting...", "active");
+            tokenClient.requestAccessToken({ prompt: 'select_account consent' });
+        }
+    }
     async function pullAndMergeCloudData() {
         if (!accessToken) return;
         try {
