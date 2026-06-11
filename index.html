@@ -100,7 +100,7 @@
         <header>
             <div>
                 <h1>To-Do Checklist</h1>
-                <div id="syncStatusIndicator" class="sync-status">Offline</div>
+                <div id="syncStatusIndicator" class="sync-status" style="display: none;"></div>
             </div>
             <div class="header-badges">
                 <div class="metric-badge"><span id="incompleteCount">0</span> remaining</div>
@@ -282,20 +282,25 @@
     let cloudFileId = null;
     let silentRefreshTimeout = null;
 
-    function setSyncStatus(text, type = '') {
+        function setSyncStatus(text, type = '') {
         const el = document.getElementById('syncStatusIndicator');
         if (el) {
-            el.innerText = text;
-            el.className = 'sync-status ' + type;
-            
-            // Automatically remove the clickable state when things are working normally
-            if (type !== 'error') {
-                el.style.cursor = 'default';
-                el.onclick = null;
+            if (!text) {
+                // If the text is blank, hide the badge completely
+                el.style.display = 'none'; 
+            } else {
+                // If there is text, show the badge
+                el.style.display = 'inline-flex';
+                el.innerText = text;
+                el.className = 'sync-status ' + type;
+                
+                if (type !== 'error') {
+                    el.style.cursor = 'default';
+                    el.onclick = null;
+                }
             }
         }
     }
-
     function gapiLoaded() {
         gapi.load('client', async () => {
             await gapi.client.init({ discoveryDocs: ['https://www.googleapis.com/discovery/v1/apis/drive/v3/rest'] });
@@ -409,7 +414,7 @@ function handleAuthFailure() {
         } else {
             authBtn.textContent = 'Connect Drive';
             authBtn.className = 'btn-primary btn-sm';
-            setSyncStatus("Offline", "");
+            setSyncStatus("", "");
         }
     }
 
