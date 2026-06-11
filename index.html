@@ -302,6 +302,8 @@
         }
     }
     function gapiLoaded() {
+        // NEW: Stop the fatal crash if offline and the script is missing
+        if (typeof gapi === 'undefined') return;
         gapi.load('client', async () => {
             await gapi.client.init({ discoveryDocs: ['https://www.googleapis.com/discovery/v1/apis/drive/v3/rest'] });
             gapiInited = true;
@@ -310,6 +312,7 @@
     }
 
     function gisLoaded() {
+        if (typeof google === 'undefined') return;
         tokenClient = google.accounts.oauth2.initTokenClient({
             client_id: CLIENT_ID,
             scope: SCOPES,
@@ -498,14 +501,18 @@ function handleAuthFailure() {
     }
 
     async function autoUploadToCloud() {
-        if (localStorage.getItem('has_linked_google') !== 'true' || !accessToken) return;
-        
-        // NEW CODE: Check if the phone is offline
+        // 1. Check network FIRST
         if (!navigator.onLine) {
-            setSyncStatus("Saved Locally (Offline) 💾", "");
-            return; // Stop the function here so it doesn't crash trying to reach Google
+            // Only show the badge if they are actually a linked user
+            if (localStorage.getItem('has_linked_google') === 'true') {
+                setSyncStatus("Saved Locally (Offline) 💾", "");
+            }
+            return; // Stop execution safely
         }
 
+        // 2. THEN check tokens
+        if (localStorage.getItem('has_linked_google') !== 'true' || !accessToken) return;
+        
         setSyncStatus("Saving to Cloud...", "active");
         try {
             if (!cloudFileId) {
