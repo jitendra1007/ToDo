@@ -100,7 +100,7 @@
         <header>
             <div>
                 <h1>To-Do Checklist</h1>
-                <div id="syncStatusIndicator" class="sync-status" style="display: none;"></div>
+                <div id="syncStatusIndicator" class="sync-status">Offline</div>
             </div>
             <div class="header-badges">
                 <div class="metric-badge"><span id="incompleteCount">0</span> remaining</div>
@@ -282,28 +282,21 @@
     let cloudFileId = null;
     let silentRefreshTimeout = null;
 
-        function setSyncStatus(text, type = '') {
+    function setSyncStatus(text, type = '') {
         const el = document.getElementById('syncStatusIndicator');
         if (el) {
-            if (!text) {
-                // If the text is blank, hide the badge completely
-                el.style.display = 'none'; 
-            } else {
-                // If there is text, show the badge
-                el.style.display = 'inline-flex';
-                el.innerText = text;
-                el.className = 'sync-status ' + type;
-                
-                if (type !== 'error') {
-                    el.style.cursor = 'default';
-                    el.onclick = null;
-                }
+            el.innerText = text;
+            el.className = 'sync-status ' + type;
+            
+            // Automatically remove the clickable state when things are working normally
+            if (type !== 'error') {
+                el.style.cursor = 'default';
+                el.onclick = null;
             }
         }
     }
+
     function gapiLoaded() {
-        // NEW: Stop the fatal crash if offline and the script is missing
-        if (typeof gapi === 'undefined') return;
         gapi.load('client', async () => {
             await gapi.client.init({ discoveryDocs: ['https://www.googleapis.com/discovery/v1/apis/drive/v3/rest'] });
             gapiInited = true;
@@ -312,7 +305,6 @@
     }
 
     function gisLoaded() {
-        if (typeof google === 'undefined') return;
         tokenClient = google.accounts.oauth2.initTokenClient({
             client_id: CLIENT_ID,
             scope: SCOPES,
@@ -417,7 +409,7 @@ function handleAuthFailure() {
         } else {
             authBtn.textContent = 'Connect Drive';
             authBtn.className = 'btn-primary btn-sm';
-            setSyncStatus("", "");
+            setSyncStatus("Offline", "");
         }
     }
 
@@ -501,19 +493,9 @@ function handleAuthFailure() {
     }
 
     async function autoUploadToCloud() {
-        // 1. Check network FIRST
-        if (!navigator.onLine) {
-            // Only show the badge if they are actually a linked user
-            if (localStorage.getItem('has_linked_google') === 'true') {
-                setSyncStatus("Saved Locally (Offline) 💾", "");
-            }
-            return; // Stop execution safely
-        }
-
-        // 2. THEN check tokens
         if (localStorage.getItem('has_linked_google') !== 'true' || !accessToken) return;
-        
         setSyncStatus("Saving to Cloud...", "active");
+        
         try {
             if (!cloudFileId) {
                 const response = await gapi.client.drive.files.list({
@@ -558,8 +540,6 @@ function handleAuthFailure() {
     const SYNC_COOLDOWN_MS = 300000; // 15 seconds cooldown
 
     function handleMicroInteraction() {
-        // NEW CODE: Stop completely if offline
-        if (!navigator.onLine) return;
         // Stop completely if the user is not logged in or the token is missing
         if (localStorage.getItem('has_linked_google') !== 'true' || !accessToken) return;
 
