@@ -499,8 +499,14 @@ function handleAuthFailure() {
 
     async function autoUploadToCloud() {
         if (localStorage.getItem('has_linked_google') !== 'true' || !accessToken) return;
-        setSyncStatus("Saving to Cloud...", "active");
         
+        // NEW CODE: Check if the phone is offline
+        if (!navigator.onLine) {
+            setSyncStatus("Saved Locally (Offline) 💾", "");
+            return; // Stop the function here so it doesn't crash trying to reach Google
+        }
+
+        setSyncStatus("Saving to Cloud...", "active");
         try {
             if (!cloudFileId) {
                 const response = await gapi.client.drive.files.list({
@@ -545,6 +551,8 @@ function handleAuthFailure() {
     const SYNC_COOLDOWN_MS = 300000; // 15 seconds cooldown
 
     function handleMicroInteraction() {
+        // NEW CODE: Stop completely if offline
+        if (!navigator.onLine) return;
         // Stop completely if the user is not logged in or the token is missing
         if (localStorage.getItem('has_linked_google') !== 'true' || !accessToken) return;
 
