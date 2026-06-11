@@ -356,16 +356,28 @@
                 setSyncStatus("Cloud Synced ✅", "active");
                 pullAndMergeCloudData(); 
             } else {
-                // TOKEN EXPIRED: Attempt silent refresh
-                updateAuthUI(true);
-                setSyncStatus("Reconnecting...", "active");
-                
-                silentRefreshTimeout = setTimeout(() => {
-                    console.warn("Silent refresh timed out. Forcing manual reconnect button.");
-                    triggerReconnectState();
-                }, 4000);
+                // TOKEN EXPIRED
+                // 1. Detect if the user is on a mobile device (via user agent or screen size)
+                const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) || window.innerWidth < 768;
 
-                tokenClient.requestAccessToken({ prompt: 'none' }); 
+                updateAuthUI(true);
+
+                if (isMobile) {
+                    // 2. INSTANT FALLBACK FOR MOBILE
+                    // Skip the silent refresh entirely. It gets blocked by mobile privacy settings,
+                    // causing the blank Google popup and the 5-10 second delay.
+                    triggerReconnectState();
+                } else {
+                    // 3. DESKTOP ONLY: Attempt the silent refresh
+                    setSyncStatus("Reconnecting...", "active");
+                    
+                    silentRefreshTimeout = setTimeout(() => {
+                        console.warn("Silent refresh timed out. Forcing manual reconnect button.");
+                        triggerReconnectState();
+                    }, 4000);
+
+                    tokenClient.requestAccessToken({ prompt: 'none' }); 
+                }
             }
         } else {
             // NEVER CONNECTED OR DISCONNECTED
