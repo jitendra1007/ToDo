@@ -115,7 +115,7 @@
             
             <div class="data-actions">
                 <button class="btn-secondary" onclick="exportData()">Export</button>
-                <button class="btn-secondary" onclick="document.getElementById('importFile').click()">Import</button>
+                <button class="btn-secondary" onclick="triggerImport()">Import</button>
                 <input type="file" id="importFile" accept=".json" onchange="importData(event)">
                 <button class="btn-secondary btn-danger-text" onclick="clearAllData()">Clear Data</button>
             </div>
@@ -241,7 +241,11 @@
         const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(databaseArray, null, 2));
         const a = document.createElement('a'); a.setAttribute("href", dataStr); a.setAttribute("download", "todo_export.json"); a.click();
     }
-
+   function triggerImport() {
+        if (confirm("Your current data will be replaced by the imported data. Do you want to continue?")) {
+            document.getElementById('importFile').click();
+        }
+    }
     function importData(event) {
         const file = event.target.files[0];
         if (!file) return;
@@ -249,7 +253,15 @@
         reader.onload = function(e) {
             try {
                 const parsed = JSON.parse(e.target.result);
-                if (Array.isArray(parsed)) { updateDataState(parsed, Date.now(), true); autoUploadToCloud(); }
+                if (Array.isArray(parsed)) { 
+                    updateDataState(parsed, Date.now(), true); 
+                    autoUploadToCloud(); 
+                    
+                    // Added success message confirmation
+                    alert("Data has been successfully imported! ✅"); 
+                } else {
+                    alert("Import failed: JSON structure is incorrect.");
+                }
             } catch(err) { alert("Invalid JSON file."); }
         };
         reader.readAsText(file);
