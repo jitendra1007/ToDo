@@ -505,10 +505,13 @@ function handleAuthFailure() {
             setSyncStatus("Cloud Synced ✅", "active");
         } catch (err) {
             console.error("Sync pull execution exception:", err);
-            if (err.status === 401) handleAuthFailure();
+            if (err.status === 401) {
+                // Force expiration flag and trigger a silent refresh instead of logging out
+                localStorage.setItem('google_token_expiry', '0'); 
+                evaluateRoutingSession(); 
+            }
         }
     }
-
     async function autoUploadToCloud() {
         if (localStorage.getItem('has_linked_google') !== 'true' || !accessToken) return;
         setSyncStatus("Saving to Cloud...", "active");
@@ -545,7 +548,11 @@ function handleAuthFailure() {
         } catch (err) {
             console.error("Cloud engine commit intercept:", err);
             setSyncStatus("Sync Paused ⚠️", "error");
-            if (err.status === 401) handleAuthFailure();
+            if (err.status === 401) {
+                // Force expiration flag and trigger a silent refresh instead of logging out
+                localStorage.setItem('google_token_expiry', '0'); 
+                evaluateRoutingSession(); 
+            }
         }
     }
     // =========================================================================
@@ -559,7 +566,12 @@ function handleAuthFailure() {
     function handleMicroInteraction() {
         // Stop completely if the user is not logged in or the token is missing
         if (localStorage.getItem('has_linked_google') !== 'true' || !accessToken) return;
-
+        // NEW CODE: Check if the token expired while the laptop was asleep
+        const expiry = parseInt(localStorage.getItem('google_token_expiry') || '0');
+        if (Date.now() >= expiry) {
+            evaluateRoutingSession(); // Trigger the silent refresh
+            return; // Stop the sync attempt so it doesn't crash
+        }
         const now = Date.now();
         // If 15 seconds have passed since the last interaction check
         if (now - lastInteractionSyncTime > SYNC_COOLDOWN_MS) {
