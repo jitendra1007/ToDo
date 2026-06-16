@@ -89,6 +89,11 @@
         }
         .btn-danger-text:hover { color: var(--danger) !important; border-color: var(--danger) !important; background-color: #fef2f2; }
         .btn-sm { padding: 0.4rem 0.8rem; font-size: 0.85rem; }
+        button:disabled {
+            opacity: 0.6;
+            cursor: wait;
+            pointer-events: none;
+        }
     </style>
 </head>
 <body>
@@ -144,7 +149,17 @@
     let databaseArray = []; // The generic container for all data envelopes
 
     document.addEventListener('DOMContentLoaded', () => {
-        // We use a new storage key to start with a fresh slate for the new architecture
+    // INSTANT UI PRE-LOADER: Flip the button state before Google scripts load
+        if (localStorage.getItem('has_linked_google') === 'true') {
+            const authBtn = document.getElementById('authBtn');
+            authBtn.textContent = 'Syncing...';
+            authBtn.className = 'btn-secondary btn-sm';
+            authBtn.disabled = true; // Lock the button to prevent accidental clicks
+        
+            setSyncStatus("Connecting to Drive...", "active");
+    }
+
+    // We use a new storage key to start with a fresh slate for the new architecture
         const storedData = localStorage.getItem('generic_app_data');
         if (storedData) {
             try { databaseArray = JSON.parse(storedData); } catch (e) { databaseArray = []; }
@@ -414,12 +429,14 @@
         };
     }
 
-function handleAuthFailure() {
+    function handleAuthFailure() {
         localStorage.removeItem('google_access_token');
         updateAuthUI(false);
     }
     function updateAuthUI(isConnected) {
         const authBtn = document.getElementById('authBtn');
+        authBtn.disabled = false; // Always unlock the button once state resolves
+    
         if (isConnected) {
             authBtn.textContent = 'Disconnect';
             authBtn.className = 'btn-secondary btn-sm btn-danger-text';
