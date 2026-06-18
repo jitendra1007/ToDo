@@ -122,6 +122,9 @@
                 <button class="btn-secondary" onclick="exportData()">Export</button>
                 <button class="btn-secondary" onclick="triggerImport()">Import</button>
                 <input type="file" id="importFile" accept=".json" onchange="importData(event)">
+                
+                <button class="btn-secondary" onclick="sanitizeDatabase()" style="color: #ea580c; border-color: #ea580c;">Sanitize DB</button>
+                
                 <button class="btn-secondary btn-danger-text" onclick="clearAllData()">Clear Data</button>
             </div>
         </div>
@@ -160,7 +163,7 @@
     }
 
     // We use a new storage key to start with a fresh slate for the new architecture
-        const storedData = localStorage.getItem('generic_app_data');
+        const storedData = localStorage.getItem('todo_local_data');
         if (storedData) {
             try { databaseArray = JSON.parse(storedData); } catch (e) { databaseArray = []; }
         }
@@ -170,7 +173,7 @@
     function updateDataState(newData, saveLocal = true) {
         databaseArray = newData;
         if (saveLocal) {
-            localStorage.setItem('generic_app_data', JSON.stringify(databaseArray));
+            localStorage.setItem('todo_local_data', JSON.stringify(databaseArray));
         }
         render();
     }
@@ -290,6 +293,18 @@
         );
         updateDataState(databaseArray, true);
         autoUploadToCloud();
+    }
+    function sanitizeDatabase() {
+        if (!confirm("This will permanently delete any corrupted or foreign data from your To-Do cloud file. Continue?")) return;
+        
+        // HARD PURGE: We keep ONLY the records meant for this app
+        databaseArray = databaseArray.filter(record => record.table === 'tasks');
+        
+        // Save the clean array locally and FORCE a cloud overwrite
+        updateDataState(databaseArray, true);
+        autoUploadToCloud();
+        
+        alert("Database Sanitized! All ghost data has been permanently purged from Google Drive. 🧹");
     }
     function escapeHTML(str) {
         return str.replace(/[&<>'"]/g, t => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[t] || t));
